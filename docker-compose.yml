@@ -1,0 +1,121 @@
+version: '3.8'
+
+networks:
+  transcription_net:
+    driver: bridge
+
+services:
+  # Nginx Proxy Manager - Ingress Gateway
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - '80:80'      # HTTP
+      - '443:443'    # HTTPS
+      - '81:81'      # Admin UI
+    networks:
+      - transcription_net
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+    environment:
+      DB_SQLITE_FILE: "/data/database.sqlite"
+
+  # Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cahts-app
+    restart: unless-stopped
+    networks:
+      - transcription_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Critical for accessing host Whisper server
+    volumes:
+      - ./uploads:/app/uploads
+      - ./prisma:/app/prisma
+    environment:
+      - DATABASE_URL=file:/app/prisma/dev.db
+      - WHISPER_API_URL=http://host.docker.internal:62277
+      - QWEN_API_URL=http://qwen2-audio:8000
+      - JWT_SECRET=${JWT_SECRET}
+      - DEFAULT_DISCORD_WEBHOOK_URL=${DEFAULT_DISCORD_WEBHOOK_URL}
+      - CONFIDENCE_THRESHOLD=${CONFIDENCE_THRESHOLD:-0.60}
+      - CLUSTERING_PROXIMITY_SECONDS=${CLUSTERING_PROXIMITY_SECONDS:-5}
+      - CORRECTION_WINDOW_SECONDS=${CORRECTION_WINDOW_SECONDS:-20}
+      - UPLOAD_DIR=/app/uploads
+      - WORKER_POLL_INTERVAL_MS=${WORKER_POLL_INTERVAL_MS:-3000}
+    depends_on:
+      - nginx-proxy-manager
+    command: sh -c "npx prisma migrate deploy && node server.js"
+
+  # Background Worker Process
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cahts-worker
+    restart: unless-stopped
+    networks:
+      - transcription_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./prisma:/app/prisma
+    environment:
+      - DATABASE_URL=file:/app/prisma/dev.db
+      - WHISPER_API_URL=http://host.docker.internal:62277
+      - QWEN_API_URL=http://qwen2-audio:8000
+      - DEFAULT_DISCORD_WEBHOOK_URL=${DEFAULT_DISCORD_WEBHOOK_URL}
+      - CONFIDENCE_THRESHOLD=${CONFIDENCE_THRESHOLD:-0.60}
+      - CLUSTERING_PROXIMITY_SECONDS=${CLUSTERING_PROXIMITY_SECONDS:-5}
+      - CORRECTION_WINDOW_SECONDS=${CORRECTION_WINDOW_SECONDS:-20}
+      - UPLOAD_DIR=/app/uploads
+      - WORKER_POLL_INTERVAL_MS=${WORKER_POLL_INTERVAL_MS:-3000}
+    command: node --loader tsx src/worker/process-jobs.ts
+
+  # Health Monitoring Service
+  health-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cahts-health-monitor
+    restart: unless-stopped
+    networks:
+      - transcription_net
+    environment:
+      - APP_URL=http://app:3000
+      - HEALTH_DISCORD_WEBHOOK_URL=${HEALTH_DISCORD_WEBHOOK_URL}
+      - DEFAULT_DISCORD_WEBHOOK_URL=${DEFAULT_DISCORD_WEBHOOK_URL}
+      - HEALTH_CHECK_INTERVAL_SECONDS=${HEALTH_CHECK_INTERVAL_SECONDS:-60}
+      - HEALTH_CHECK_TIMEOUT_SECONDS=${HEALTH_CHECK_TIMEOUT_SECONDS:-10}
+      - HEALTH_CHECK_FAILURE_THRESHOLD=${HEALTH_CHECK_FAILURE_THRESHOLD:-3}
+    depends_on:
+      - app
+    command: node --loader tsx src/monitoring/health-monitor.ts
+
+  # Qwen2-Audio Inference Server (vLLM)
+  qwen2-audio:
+    image: vllm/vllm-openai:latest
+    container_name: qwen2-audio
+    restart: unless-stopped
+    networks:
+      - transcription_net
+    shm_size: '16gb'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      --model Qwen/Qwen2-Audio-7B-Instruct
+      --served-model-name Qwen2-Audio
+      --host 0.0.0.0
+      --port 8000
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
