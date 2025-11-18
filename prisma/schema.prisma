@@ -1,0 +1,92 @@
+// Prisma Schema for CAHTS (Confidence-Aware Hierarchical Transcription System)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User Model - Authentication and personalization
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String
+  name              String?
+  discordWebhookUrl String?  // User-specific Discord webhook (optional)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  jobs Job[]
+
+  @@index([email])
+}
+
+// Job Model - Master transcription job
+model Job {
+  id                String   @id @default(uuid())
+  userId            String
+  status            JobStatus @default(PENDING)
+  originalAudioPath String   // File system path to uploaded audio
+  originalFileName  String   // Original filename for display
+  transcript        String?  @db.Text // Final merged transcript
+  processingStarted DateTime?
+  processingEnded   DateTime?
+  errorMessage      String?  @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  segments  Segment[]
+
+  @@index([userId, status])
+  @@index([status])
+}
+
+// Segment Model - Word-level confidence data from Whisper
+model Segment {
+  id         String  @id @default(uuid())
+  jobId      String
+  word       String
+  start      Float   // Start time in seconds
+  end        Float   // End time in seconds
+  confidence Float   // Probability (0.0 to 1.0)
+
+  // Relations
+  job         Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  corrections Correction[]
+
+  @@index([jobId])
+  @@index([jobId, confidence])
+}
+
+// Correction Model - Qwen2-Audio corrections for low-confidence segments
+model Correction {
+  id                  String   @id @default(uuid())
+  segmentId           String
+  originalText        String   @db.Text // Original Whisper transcription
+  correctedText       String   @db.Text // Qwen2-Audio correction
+  triggerConfidence   Float    // The confidence score that triggered this correction
+  audioClipPath       String?  // Path to the 20-second audio clip used
+  clipStart           Float    // Start time of the correction window
+  clipEnd             Float    // End time of the correction window
+  levenshteinDistance Int?     // Quality metric for the correction
+  createdAt           DateTime @default(now())
+
+  // Relations
+  segment Segment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@index([segmentId])
+}
+
+// Enum for Job Status
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
