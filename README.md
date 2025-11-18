@@ -19,10 +19,25 @@ The system consists of several key components:
 
 1. **Next.js Application**: Web UI and API endpoints
 2. **Background Worker**: Processes transcription jobs from the queue
-3. **Nginx Proxy Manager**: SSL termination and reverse proxy
-4. **Faster-Whisper Server**: External ASR service (running on host)
-5. **Qwen2-Audio Server**: Containerized multimodal LLM (vLLM)
-6. **SQLite Database**: Job queue and user data
+3. **Health Monitor**: Monitors system health and sends Discord alerts
+4. **Nginx Proxy Manager**: SSL termination and reverse proxy
+5. **Faster-Whisper Server**: External ASR service (running on host)
+6. **Qwen2-Audio Server**: Containerized multimodal LLM (vLLM)
+7. **SQLite Database**: Job queue and user data
+
+### Health Monitoring
+
+The system includes automated health monitoring with Discord notifications:
+
+- **Automatic Health Checks**: Monitors database, Whisper API, and Qwen API every 60 seconds
+- **Failure Detection**: Alerts after 3 consecutive failures (configurable)
+- **Recovery Notifications**: Notifies when services come back online
+- **Service Status**: Tracks healthy, degraded, and unhealthy states
+- **Response Time Tracking**: Monitors API response times
+
+Health check endpoints:
+- `/api/health` - Basic liveness check
+- `/api/health/detailed` - Detailed service health with response times
 
 ## Prerequisites
 
@@ -84,6 +99,12 @@ UPLOAD_DIR="./uploads"
 
 # Worker Settings
 WORKER_POLL_INTERVAL_MS="3000"
+
+# Health Monitoring Settings
+HEALTH_CHECK_INTERVAL_SECONDS="60"
+HEALTH_CHECK_TIMEOUT_SECONDS="10"
+HEALTH_CHECK_FAILURE_THRESHOLD="3"
+HEALTH_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 ```
 
 ### 3. Start Faster-Whisper Server (External)
@@ -121,6 +142,7 @@ docker-compose up -d --build
 This will start:
 - Next.js application (port 3000)
 - Background worker
+- Health monitoring service
 - Nginx Proxy Manager (ports 80, 443, 81)
 - Qwen2-Audio vLLM server
 
@@ -286,6 +308,46 @@ Duration of audio clips sent to Qwen2-Audio for correction.
 
 ```env
 CORRECTION_WINDOW_SECONDS="20"
+```
+
+### Health Monitoring Configuration
+
+**Check Interval**
+
+Default: `60` seconds
+
+How often the health monitor checks all services.
+
+```env
+HEALTH_CHECK_INTERVAL_SECONDS="60"
+```
+
+**Timeout**
+
+Default: `10` seconds
+
+Maximum time to wait for each health check response.
+
+```env
+HEALTH_CHECK_TIMEOUT_SECONDS="10"
+```
+
+**Failure Threshold**
+
+Default: `3` consecutive failures
+
+Number of consecutive failures before sending a Discord alert.
+
+```env
+HEALTH_CHECK_FAILURE_THRESHOLD="3"
+```
+
+**Discord Webhook for Health Alerts**
+
+Optional: Separate webhook for health monitoring alerts (falls back to DEFAULT_DISCORD_WEBHOOK_URL).
+
+```env
+HEALTH_DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 ```
 
 ## Troubleshooting

@@ -77,6 +77,26 @@ services:
       - WORKER_POLL_INTERVAL_MS=${WORKER_POLL_INTERVAL_MS:-3000}
     command: node --loader tsx src/worker/process-jobs.ts
 
+  # Health Monitoring Service
+  health-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cahts-health-monitor
+    restart: unless-stopped
+    networks:
+      - transcription_net
+    environment:
+      - APP_URL=http://app:3000
+      - HEALTH_DISCORD_WEBHOOK_URL=${HEALTH_DISCORD_WEBHOOK_URL}
+      - DEFAULT_DISCORD_WEBHOOK_URL=${DEFAULT_DISCORD_WEBHOOK_URL}
+      - HEALTH_CHECK_INTERVAL_SECONDS=${HEALTH_CHECK_INTERVAL_SECONDS:-60}
+      - HEALTH_CHECK_TIMEOUT_SECONDS=${HEALTH_CHECK_TIMEOUT_SECONDS:-10}
+      - HEALTH_CHECK_FAILURE_THRESHOLD=${HEALTH_CHECK_FAILURE_THRESHOLD:-3}
+    depends_on:
+      - app
+    command: node --loader tsx src/monitoring/health-monitor.ts
+
   # Qwen2-Audio Inference Server (vLLM)
   qwen2-audio:
     image: vllm/vllm-openai:latest
